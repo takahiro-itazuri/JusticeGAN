@@ -20,16 +20,16 @@ class JusticeGAN():
 		# === model === #
 		# Criminal (犯罪者)
 		self.C = nn.Sequential(
-			nn.Linear(opt.nz, opt.ncf),
+			nn.Linear(opt.nz, opt.ncf, bias=False),
 			nn.BatchNorm1d(opt.ncf),
 			nn.ReLU(True),
-			nn.Linear(opt.ncf, opt.ncf),
+			nn.Linear(opt.ncf, opt.ncf, bias=False),
 			nn.BatchNorm1d(opt.ncf),
 			nn.ReLU(True),
-			nn.Linear(opt.ncf, opt.ncf),
+			nn.Linear(opt.ncf, opt.ncf, bias=False),
 			nn.BatchNorm1d(opt.ncf),
 			nn.ReLU(True),
-			nn.Linear(opt.ncf, opt.ncf),
+			nn.Linear(opt.ncf, opt.ncf, bias=False),
 			nn.BatchNorm1d(opt.ncf),
 			nn.ReLU(True),
 			nn.Linear(opt.ncf, 2)
@@ -37,34 +37,29 @@ class JusticeGAN():
 
 		# Offer (状況証拠)
 		self.O = nn.Sequential(
-			nn.Linear(2, opt.njf),
+			nn.Linear(2, opt.njf, bias=False),
 			nn.BatchNorm1d(opt.njf),
 			nn.ReLU(True),
-			nn.Linear(opt.njf, opt.njf),
+			nn.Linear(opt.njf, opt.njf, bias=False),
+			nn.BatchNorm1d(opt.njf),
+			nn.ReLU(True),
+			nn.Linear(opt.njf, opt.njf, bias=False),
 			nn.BatchNorm1d(opt.njf),
 			nn.ReLU(True),
 		).to(opt.device)
 
 		# Lawyer (弁護士)
 		self.L = nn.Sequential(
-			nn.Linear(opt.njf, opt.njf),
-			nn.BatchNorm1d(opt.njf),
-			nn.ReLU(True),
-			nn.Linear(opt.njf, opt.njf)
+			nn.Linear(opt.njf, opt.njf, bias=False)
 		).to(opt.device)
 
 		# Prosecutor (検察官)
 		self.P = nn.Sequential(
-			nn.Linear(opt.njf, opt.njf),
-			nn.BatchNorm1d(opt.njf),
-			nn.ReLU(True),
-			nn.Linear(opt.njf, opt.njf)
+			nn.Linear(opt.njf, opt.njf, bias=False)
 		).to(opt.device)
 
 		# Judge (裁判官)
 		self.J = nn.Sequential(
-			nn.BatchNorm1d(2 * opt.njf),
-			nn.ReLU(True),
 			nn.Linear(2 * opt.njf, 1),
 			nn.Sigmoid()
 		).to(opt.device)
@@ -163,12 +158,12 @@ class JusticeGAN():
 			vl_fake = self.L(v_fake) + v_fake
 			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
 
-			P_loss = torch.mean(F.relu(j_real - 0.25)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
+			P_loss = torch.mean(F.relu(j_real - 0.75)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
 			# P_loss = j_real + j_fake
 			P_loss.backward(retain_graph=True)
 			self.P_optimizer.step()
 
-			L_loss = torch.mean(F.relu(j_fake - 0.25)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
+			L_loss = torch.mean(F.relu(j_fake - 0.75)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
 			# L_loss = j_real + j_fake
 			L_loss.backward(retain_graph=True)
 			self.L_optimizer.step()
@@ -190,9 +185,9 @@ class JusticeGAN():
 				self.C_optimizer.step()
 
 				C_running_loss += C_loss.item()
-				O_running_loss += O_loss.item()
-				L_running_loss += L_loss.item()
-				P_running_loss += P_loss.item()
+			O_running_loss += O_loss.item()
+			L_running_loss += L_loss.item()
+			P_running_loss += P_loss.item()
 			J_running_loss += J_loss.item()
 
 		return C_running_loss / nitrs, O_running_loss / nitrs, L_running_loss / nitrs, P_running_loss / nitrs, J_running_loss / nitrs
@@ -210,11 +205,11 @@ class JusticeGAN():
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--nz', type=int, default=64, help='latent variable size')
-	parser.add_argument('--ncf', type=int, default=32, help='feature size of criminal')
-	parser.add_argument('--njf', type=int, default=32, help='feature size of judge')
+	parser.add_argument('--nz', type=int, default=256, help='latent variable size')
+	parser.add_argument('--ncf', type=int, default=128, help='feature size of criminal')
+	parser.add_argument('--njf', type=int, default=128, help='feature size of judge')
 	parser.add_argument('--njitrs', type=int, default=5, help='number of iterations for updating juddge')
-	parser.add_argument('--gamma', type=float, default=1.0, help='coefficient of perturbation loss')
+	parser.add_argument('--gamma', type=float, default=10.0, help='coefficient of perturbation loss')
 
 	parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
 	parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for Adam')
@@ -225,7 +220,7 @@ def main():
 
 	parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
 	parser.add_argument('--num_test_samples', type=int, default=8000, help='number of samples in test')
-	parser.add_argument('--checkpoint', type=int, default=10, help='checkpoint epoch')
+	parser.add_argument('--checkpoint', type=int, default=1, help='checkpoint epoch')
 	opt = parser.parse_args()
 
 	opt.device = torch.device("cuda:0" if opt.use_gpu else "cpu")
@@ -244,11 +239,12 @@ def main():
 		if epoch % opt.checkpoint == 0:
 			generated_samples = model.test()
 
-			plt.figure()		
+			fig = plt.figure()		
 			plt.scatter(np_data[:, 0], np_data[:, 1], s=1, c="red")
 			plt.scatter(generated_samples[:, 0], generated_samples[:, 1], s=1, c="blue")
 			plt.axes().set_aspect('equal', 'datalim')
 			plt.savefig(os.path.join(opt.log_dir, 'epoch{:04d}.png'.format(epoch)), dpi=100)
+			plt.close(fig)
 
 		print('[epoch {:4d}] C: {:.4f}, O: {:.4f}, L: {:.4f}, P: {:.4f}, J: {:.4f}'.format(epoch, C_loss, O_loss, L_loss, P_loss, J_loss))
 		writer.add_scalars('Loss', {'C': C_loss, 'O': O_loss, "L": L_loss, "P": P_loss, "J": J_loss}, global_step=epoch)
