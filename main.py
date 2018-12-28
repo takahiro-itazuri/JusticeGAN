@@ -158,13 +158,13 @@ class JusticeGAN():
 			vl_fake = self.L(v_fake) + v_fake
 			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
 
-			P_loss = torch.mean(F.relu(j_real - 0.75)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
-			# P_loss = j_real + j_fake
+			# P_loss = torch.mean(j_real) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
+			P_loss = torch.mean(F.relu(j_real - 0.5)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
 			P_loss.backward(retain_graph=True)
 			self.P_optimizer.step()
 
-			L_loss = torch.mean(F.relu(j_fake - 0.75)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
-			# L_loss = j_real + j_fake
+			# L_loss = torch.mean(j_fake) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
+			L_loss = torch.mean(F.relu(j_fake - 0.5)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
 			L_loss.backward(retain_graph=True)
 			self.L_optimizer.step()
 
@@ -211,7 +211,7 @@ def main():
 	parser.add_argument('--njitrs', type=int, default=5, help='number of iterations for updating juddge')
 	parser.add_argument('--gamma', type=float, default=10.0, help='coefficient of perturbation loss')
 
-	parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
+	parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
 	parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for Adam')
 	parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for Adam')
 	parser.add_argument('--batch_size', type=int, default=8000, help='batch size')
@@ -220,7 +220,7 @@ def main():
 
 	parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
 	parser.add_argument('--num_test_samples', type=int, default=8000, help='number of samples in test')
-	parser.add_argument('--checkpoint', type=int, default=1, help='checkpoint epoch')
+	parser.add_argument('--checkpoint', type=int, default=10, help='checkpoint epoch')
 	opt = parser.parse_args()
 
 	opt.device = torch.device("cuda:0" if opt.use_gpu else "cpu")
