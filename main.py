@@ -11,33 +11,33 @@ from torch.utils.data import TensorDataset, DataLoader
 from tensorboardX import SummaryWriter
 
 # === hyperparameter === #
-nz = 100
-nh = 128
+nz = 16
+nh = 8
 no = 2
-nf = 64
+nf = 8
 
 use_gpu = True
 device = torch.device("cuda:0" if use_gpu else "cpu")
-num_epochs = 100
+num_epochs = 1000
 num_test_samples = 80000
-lr = 0.01
+lr = 0.1
 batch_size = 80000
 
-writer = SummaryWriter('runs/lr0.01')
-output_filename = 'result_lr0.01.png'
+writer = SummaryWriter('runs/lr{:f}_epoch{:d}'.format(lr, num_epochs))
+output_filename = 'result_lr{:f}_epoch{:d}.png'.format(lr, num_epochs)
 
 # === dataset === #
-radius = 10.0
+radius = 1.0
 npoints = 8
 means = []
 for p in range(npoints):
 	theta = p * 2.0 * np.pi / npoints
 	means.append(torch.tensor([radius * float(np.cos(theta)), radius * float(np.sin(theta))]))
-std = 1.0
+std = 0.1
 nsamples = 10000
 data = []
 for i in range(npoints):
-	data.append(means[i] + torch.randn(nsamples, 2))
+	data.append(means[i] + std * torch.randn(nsamples, 2))
 tensor_data = torch.cat(data)
 np_data = tensor_data.numpy()
 dataset = TensorDataset(tensor_data)
@@ -52,6 +52,18 @@ C = nn.Sequential(
   nn.Linear(nh, nh),
   nn.BatchNorm1d(nh),
   nn.ReLU(True),
+  nn.Linear(nh, nh),
+  nn.BatchNorm1d(nh),
+  nn.ReLU(True),
+  nn.Linear(nh, nh),
+  nn.BatchNorm1d(nh),
+  nn.ReLU(True),
+  nn.Linear(nh, nh),
+  nn.BatchNorm1d(nh),
+  nn.ReLU(True),
+  nn.Linear(nh, nh),
+  nn.BatchNorm1d(nh),
+  nn.ReLU(True),
   nn.Linear(nh, no),
   nn.Tanh()
 ).to(device)
@@ -59,6 +71,15 @@ C = nn.Sequential(
 # Offer (状況証拠)
 O = nn.Sequential(
   nn.Linear(no, nf),
+  nn.BatchNorm1d(nf),
+  nn.ReLU(True),
+  nn.Linear(nf, nf),
+  nn.BatchNorm1d(nf),
+  nn.ReLU(True),
+  nn.Linear(nf, nf),
+  nn.BatchNorm1d(nf),
+  nn.ReLU(True),
+  nn.Linear(nf, nf),
   nn.BatchNorm1d(nf),
   nn.ReLU(True)
 ).to(device)
@@ -211,6 +232,7 @@ for epoch in range(num_epochs):
 
 	num_itrs = len(dataset) // batch_size
 	print('[epoch {:4d}] C: {:.4f}, O: {:.4f}, L: {:.4f}, P: {:.4f}, J: {:.4f}'.format(epoch, C_running_loss / num_itrs, O_running_loss / num_itrs, L_running_loss / num_itrs, P_running_loss / num_itrs, J_running_loss / num_itrs))
+	print('real: {:.4f}, fake: {:.4f}'.format(torch.mean(j_real).item(), torch.mean(j_fake).item()))
 	writer.add_scalars('Loss', {'C': C_running_loss / num_itrs, 'O': O_running_loss / num_itrs, "L": L_running_loss / num_itrs, "P": P_running_loss / num_itrs, "J": J_running_loss / num_itrs}, global_step=epoch)
 
 
