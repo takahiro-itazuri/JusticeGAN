@@ -16,15 +16,18 @@ nh = 8
 no = 2
 nf = 8
 
+gamma = 1.0
+nj = 10
+
 use_gpu = True
 device = torch.device("cuda:0" if use_gpu else "cpu")
-num_epochs = 1000
+num_epochs = 100
 num_test_samples = 80000
 lr = 0.1
-batch_size = 80000
+batch_size = 8000
 
-writer = SummaryWriter('runs/lr{:f}_epoch{:d}'.format(lr, num_epochs))
-output_filename = 'result_lr{:f}_epoch{:d}.png'.format(lr, num_epochs)
+writer = SummaryWriter('runs/lr{:.3f}_epoch{:d}'.format(lr, num_epochs))
+output_filename = 'result_lr{:.3f}_epoch{:d}.png'.format(lr, num_epochs)
 
 # === dataset === #
 radius = 1.0
@@ -100,7 +103,6 @@ P = nn.Sequential(
 
 # Judge (裁判官)
 J = nn.Sequential(
-
 	nn.Linear(2 * nf, 1),
 	nn.Sigmoid()
 ).to(device)
@@ -142,15 +144,15 @@ for epoch in range(num_epochs):
 
 		x_real = x[0].to(device)
 		v_real = O(x_real)
-		vp_real = P(v_real)
-		vl_real = L(v_real)
+		vp_real = P(v_real) + v_real
+		vl_real = L(v_real) + v_real
 		j_real = J(torch.cat([vp_real, vl_real], dim=1))
 
 		z = torch.randn((batch_size, nz), device=device)
 		x_fake = C(z)
 		v_fake = O(x_fake)
-		vp_fake = P(v_fake)
-		vl_fake = L(v_fake)
+		vp_fake = P(v_fake) + v_fake
+		vl_fake = L(v_fake) + v_fake
 		j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
 
 		loss_real = criterion(j_real, real_label)
@@ -159,62 +161,14 @@ for epoch in range(num_epochs):
 		J_loss.backward()
 		J_optimizer.step()
 
-		# --- Update P & L network --- #
-		P_optimizer.zero_grad()
-		L_optimizer.zero_grad()
-
-		x_real = x[0].to(device)
-		v_real = O(x_real)
-		vp_real = P(v_real)
-		vl_real = L(v_real)
-		j_real = J(torch.cat([vp_real, vl_real], dim=1))
-
-		z = torch.randn((batch_size, nz), device=device)
-		x_fake = C(z)
-		v_fake = O(x_fake)
-		vp_fake = P(v_fake)
-		vl_fake = L(v_fake)
-		j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
-
-		P_loss = torch.mean(j_real)
-		P_loss.backward()
-		P_optimizer.step()
-
-		L_loss = torch.mean(j_fake)
-		L_loss.backward()
-		L_optimizer.step()
-
-		# --- Update O network --- #
-		O_optimizer.zero_grad()
-
-		x_real = x[0].to(device)
-		v_real = O(x_real)
-		vp_real = P(v_real)
-		vl_real = L(v_real)
-		j_real = J(torch.cat([vp_real, vl_real], dim=1))
-
-		z = torch.randn((batch_size, nz), device=device)
-		x_fake = C(z)
-		v_fake = O(x_fake)
-		vp_fake = P(v_fake)
-		vl_fake = L(v_fake)
-		j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
-
-		loss_real = criterion(j_real, real_label)
-		loss_fake = criterion(j_fake, fake_label)
-
-		O_loss = loss_real + loss_fake
-		O_loss.backward()
-		O_optimizer.step()
-
 		# --- Update C network --- #
 		C_optimizer.zero_grad()
 
 		z = torch.randn((batch_size, nz), device=device)
 		x_fake = C(z).detach()
 		v_fake = O(x_fake)
-		vp_fake = P(v_fake)
-		vl_fake = L(v_fake)
+		vp_fake = P(v_fake) + v_fake
+		vl_fake = L(v_fake) + v_fake
 		j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
 
 		loss_real = criterion(j_real, real_label)
@@ -224,11 +178,60 @@ for epoch in range(num_epochs):
 		C_loss.backward()
 		C_optimizer.step()
 
-		C_running_loss = C_loss.item()
-		O_running_loss = O_loss.item()
-		L_running_loss = L_loss.item()
-		P_running_loss = P_loss.item()
+		if itr % nj == 0:
+			# --- Update P & L network --- #
+			P_optimizer.zero_grad()
+			L_optimizer.zero_grad()
+
+			x_real = x[0].to(device)
+			v_real = O(x_real)
+			vp_real = P(v_real) + v_real
+			vl_real = L(v_real) + v_real
+			j_real = J(torch.cat([vp_real, vl_real], dim=1))
+
+			z = torch.randn((batch_size, nz), device=device)
+			x_fake = C(z)
+			v_fake = O(x_fake)
+			vp_fake = P(v_fake) + v_fake
+			vl_fake = L(v_fake) + v_fake
+			j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
+
+			P_loss = torch.mean(j_real) + gamma * torch.mean(torch.norm(vp_real)) + gamma * torch.mean(torch.norm(vp_fake))
+			P_loss.backward(retain_graph=True)
+			P_optimizer.step()
+
+			L_loss = torch.mean(j_fake) + gamma * torch.mean(torch.norm(vl_real)) + gamma * torch.mean(torch.norm(vl_fake))
+			L_loss.backward(retain_graph=True)
+			L_optimizer.step()
+
+			# --- Update O network --- #
+			O_optimizer.zero_grad()
+
+			x_real = x[0].to(device)
+			v_real = O(x_real)
+			vp_real = P(v_real)
+			vl_real = L(v_real)
+			j_real = J(torch.cat([vp_real, vl_real], dim=1))
+
+			z = torch.randn((batch_size, nz), device=device)
+			x_fake = C(z)
+			v_fake = O(x_fake)
+			vp_fake = P(v_fake)
+			vl_fake = L(v_fake)
+			j_fake = J(torch.cat([vp_fake, vl_fake], dim=1))
+
+			loss_real = criterion(j_real, real_label)
+			loss_fake = criterion(j_fake, fake_label)
+
+			O_loss = loss_real + loss_fake
+			O_loss.backward()
+			O_optimizer.step()
+
+			O_running_loss = O_loss.item()
+			L_running_loss = L_loss.item()
+			P_running_loss = P_loss.item()
 		J_running_loss = J_loss.item()
+		C_running_loss = C_loss.item()
 
 	num_itrs = len(dataset) // batch_size
 	print('[epoch {:4d}] C: {:.4f}, O: {:.4f}, L: {:.4f}, P: {:.4f}, J: {:.4f}'.format(epoch, C_running_loss / num_itrs, O_running_loss / num_itrs, L_running_loss / num_itrs, P_running_loss / num_itrs, J_running_loss / num_itrs))
