@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 import torchvision
 from torch import nn, optim
+from torch.nn import functional as F
 from torch.utils.data import TensorDataset, DataLoader
 
 from tensorboardX import SummaryWriter
@@ -122,57 +123,58 @@ class JusticeGAN():
 			J_loss.backward()
 			self.J_optimizer.step()
 
+			# --- Update O network --- #
+			self.O_optimizer.zero_grad()
+
+			x_real = x[0].to(self.opt.device)
+			v_real = self.O(x_real)
+			vp_real = self.P(v_real) + v_real
+			vl_real = self.L(v_real) + v_real
+			j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
+
+			z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
+			x_fake = self.C(z)
+			v_fake = self.O(x_fake)
+			vp_fake = self.P(v_fake) + v_fake
+			vl_fake = self.L(v_fake) + v_fake
+			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
+
+			loss_real = self.criterion(j_real, real_label)
+			loss_fake = self.criterion(j_fake, fake_label)
+
+			O_loss = loss_real + loss_fake
+			O_loss.backward()
+			self.O_optimizer.step()
+
+			# --- Update P & L network --- #
+			self.P_optimizer.zero_grad()
+			self.L_optimizer.zero_grad()
+
+			x_real = x[0].to(self.opt.device)
+			v_real = self.O(x_real)
+			vp_real = self.P(v_real) + v_real
+			vl_real = self.L(v_real) + v_real
+			j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
+
+			z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
+			x_fake = self.C(z)
+			v_fake = self.O(x_fake)
+			vp_fake = self.P(v_fake) + v_fake
+			vl_fake = self.L(v_fake) + v_fake
+			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
+
+			P_loss = torch.mean(F.relu(j_real - 0.25)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
+			# P_loss = j_real + j_fake
+			P_loss.backward(retain_graph=True)
+			self.P_optimizer.step()
+
+			L_loss = torch.mean(F.relu(j_fake - 0.25)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
+			# L_loss = j_real + j_fake
+			L_loss.backward(retain_graph=True)
+			self.L_optimizer.step()
+
+
 			if (itr + 1) % self.opt.njitrs:
-				# --- Update P & L network --- #
-				self.P_optimizer.zero_grad()
-				self.L_optimizer.zero_grad()
-
-				x_real = x[0].to(self.opt.device)
-				v_real = self.O(x_real)
-				vp_real = self.P(v_real) + v_real
-				vl_real = self.L(v_real) + v_real
-				j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
-
-				z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
-				x_fake = self.C(z)
-				v_fake = self.O(x_fake)
-				vp_fake = self.P(v_fake) + v_fake
-				vl_fake = self.L(v_fake) + v_fake
-				j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
-
-				P_loss = torch.mean(j_real) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
-				# P_loss = j_real + j_fake
-				P_loss.backward(retain_graph=True)
-				self.P_optimizer.step()
-
-				L_loss = torch.mean(j_fake) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
-				# L_loss = j_real + j_fake
-				L_loss.backward(retain_graph=True)
-				self.L_optimizer.step()
-
-				# --- Update O network --- #
-				self.O_optimizer.zero_grad()
-
-				x_real = x[0].to(self.opt.device)
-				v_real = self.O(x_real)
-				vp_real = self.P(v_real) + v_real
-				vl_real = self.L(v_real) + v_real
-				j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
-
-				z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
-				x_fake = self.C(z)
-				v_fake = self.O(x_fake)
-				vp_fake = self.P(v_fake) + v_fake
-				vl_fake = self.L(v_fake) + v_fake
-				j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
-
-				loss_real = self.criterion(j_real, real_label)
-				loss_fake = self.criterion(j_fake, fake_label)
-
-				O_loss = loss_real + loss_fake
-				O_loss.backward()
-				self.O_optimizer.step()
-
 				# --- Update C network --- #
 				self.C_optimizer.zero_grad()
 
@@ -253,7 +255,7 @@ def main():
 
 
 
-def generate_dataset(radius=0.1, npoints=8, std=0.01, num_samples=10000):
+def generate_dataset(radius=1.0, npoints=8, std=0.1, num_samples=10000):
 	means = []
 	for p in range(npoints):
 		theta = p * 2.0 * np.pi / npoints
