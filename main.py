@@ -43,9 +43,7 @@ class JusticeGAN():
 			nn.Linear(opt.njf, opt.njf, bias=False),
 			nn.BatchNorm1d(opt.njf),
 			nn.ReLU(True),
-			nn.Linear(opt.njf, opt.njf, bias=False),
-			nn.BatchNorm1d(opt.njf),
-			nn.ReLU(True),
+			nn.Linear(opt.njf, opt.njf, bias=False)
 		).to(opt.device)
 
 		# Lawyer (弁護士)
@@ -60,6 +58,8 @@ class JusticeGAN():
 
 		# Judge (裁判官)
 		self.J = nn.Sequential(
+			nn.BatchNorm1d(2 * opt.njf),
+			nn.ReLU(True),
 			nn.Linear(2 * opt.njf, 1),
 			nn.Sigmoid()
 		).to(opt.device)
@@ -68,13 +68,9 @@ class JusticeGAN():
 		self.criterion = nn.BCELoss()
 
 		# === optimizers === #
-		self.C_optimizer = optim.Adam(self.C.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
-		self.O_optimizer = optim.Adam(self.O.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
-		self.L_optimizer = optim.Adam(self.L.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
-		self.P_optimizer = optim.Adam(self.P.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
-		self.J_optimizer = optim.Adam(self.J.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+		self.init_optimizers()
 
-	def train(self):
+	def train(self, perturbation=True):
 		self.C.train()
 		self.O.train()
 		self.L.train()
@@ -101,16 +97,24 @@ class JusticeGAN():
 
 			x_real = x[0].to(self.opt.device)
 			v_real = self.O(x_real)
-			vp_real = self.P(v_real) + v_real
-			vl_real = self.L(v_real) + v_real
-			j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
+			if perturbation:
+				p_real = self.P(v_real)
+				l_real = self.L(v_real)
+			else:
+				p_real = torch.zeros_like(v_real)
+				l_real = torch.zeros_like(v_real)
+			j_real = self.J(torch.cat([v_real + p_real, v_real + l_real], dim=1))
 
 			z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
 			x_fake = self.C(z)
 			v_fake = self.O(x_fake)
-			vp_fake = self.P(v_fake) + v_fake
-			vl_fake = self.L(v_fake) + v_fake
-			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
+			if perturbation:
+				p_fake = self.P(v_fake)
+				l_fake = self.L(v_fake)
+			else:
+				p_fake = torch.zeros_like(v_fake)
+				l_fake = torch.zeros_like(v_fake)
+			j_fake = self.J(torch.cat([v_fake + p_fake, v_fake + l_fake], dim=1))
 
 			loss_real = self.criterion(j_real, real_label)
 			loss_fake = self.criterion(j_fake, fake_label)
@@ -118,21 +122,31 @@ class JusticeGAN():
 			J_loss.backward()
 			self.J_optimizer.step()
 
+			J_running_loss += J_loss.item()
+
 			# --- Update O network --- #
 			self.O_optimizer.zero_grad()
 
 			x_real = x[0].to(self.opt.device)
 			v_real = self.O(x_real)
-			vp_real = self.P(v_real) + v_real
-			vl_real = self.L(v_real) + v_real
-			j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
+			if perturbation:
+				p_real = self.P(v_real)
+				l_real = self.L(v_real)
+			else:
+				p_real = torch.zeros_like(v_real)
+				l_real = torch.zeros_like(v_real)
+			j_real = self.J(torch.cat([v_real + p_real, v_real + l_real], dim=1))
 
 			z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
 			x_fake = self.C(z)
 			v_fake = self.O(x_fake)
-			vp_fake = self.P(v_fake) + v_fake
-			vl_fake = self.L(v_fake) + v_fake
-			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
+			if perturbation:
+				p_fake = self.P(v_fake)
+				l_fake = self.L(v_fake)
+			else:
+				p_fake = torch.zeros_like(v_fake)
+				l_fake = torch.zeros_like(v_fake)
+			j_fake = self.J(torch.cat([v_fake + p_fake, v_fake + l_fake], dim=1))
 
 			loss_real = self.criterion(j_real, real_label)
 			loss_fake = self.criterion(j_fake, fake_label)
@@ -141,54 +155,59 @@ class JusticeGAN():
 			O_loss.backward()
 			self.O_optimizer.step()
 
-			# --- Update P & L network --- #
-			self.P_optimizer.zero_grad()
-			self.L_optimizer.zero_grad()
-
-			x_real = x[0].to(self.opt.device)
-			v_real = self.O(x_real)
-			vp_real = self.P(v_real) + v_real
-			vl_real = self.L(v_real) + v_real
-			j_real = self.J(torch.cat([vp_real, vl_real], dim=1))
-
-			z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
-			x_fake = self.C(z)
-			v_fake = self.O(x_fake)
-			vp_fake = self.P(v_fake) + v_fake
-			vl_fake = self.L(v_fake) + v_fake
-			j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
-
-			# P_loss = torch.mean(j_real) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
-			P_loss = torch.mean(F.relu(j_real - 0.5)) + self.opt.gamma * torch.mean(vp_real**2) + self.opt.gamma * torch.mean(vp_fake**2)
-			P_loss.backward(retain_graph=True)
-			self.P_optimizer.step()
-
-			# L_loss = torch.mean(j_fake) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
-			L_loss = torch.mean(F.relu(j_fake - 0.5)) + self.opt.gamma * torch.mean(vl_real**2) + self.opt.gamma * torch.mean(vl_fake**2)
-			L_loss.backward(retain_graph=True)
-			self.L_optimizer.step()
-
+			O_running_loss += O_loss.item()
 
 			if (itr + 1) % self.opt.njitrs:
+				if perturbation:
+					# --- Update P & L network --- #
+					self.P_optimizer.zero_grad()
+					self.L_optimizer.zero_grad()
+
+					x_real = x[0].to(self.opt.device)
+					v_real = self.O(x_real)
+					p_real = self.P(v_real)
+					l_real = self.L(v_real)
+					j_real = self.J(torch.cat([v_real + p_real, v_real + l_real], dim=1))
+
+					z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
+					x_fake = self.C(z)
+					v_fake = self.O(x_fake)
+					p_fake = self.P(v_fake)
+					l_fake = self.L(v_fake)
+					j_fake = self.J(torch.cat([v_fake + p_fake, v_fake + l_fake], dim=1))
+
+					P_loss = torch.mean(j_real) + self.opt.gamma * (torch.mean(torch.abs(p_real)) + torch.mean(torch.abs(p_fake)))
+					# P_loss = torch.mean(F.relu(j_real - 0.5)) + self.opt.gamma * torch.mean(torch.abs(p_real)) + self.opt.gamma * torch.mean(torch.abs(p_fake))
+					P_loss.backward(retain_graph=True)
+					self.P_optimizer.step()
+
+					L_loss = torch.mean(j_real) + self.opt.gamma * (torch.mean(torch.abs(l_real)) + torch.mean(torch.abs(l_fake)))
+					# L_loss = torch.mean(F.relu(j_fake - 0.5)) + self.opt.gamma * torch.mean(torch.abs(l_real)) + self.opt.gamma * torch.mean(torch.abs(l_fake))
+					L_loss.backward(retain_graph=True)
+					self.L_optimizer.step()
+
+					L_running_loss += L_loss.item()
+					P_running_loss += P_loss.item()
+
 				# --- Update C network --- #
 				self.C_optimizer.zero_grad()
 
 				z = torch.randn((self.opt.batch_size, self.opt.nz), device=self.opt.device)
 				x_fake = self.C(z)
 				v_fake = self.O(x_fake)
-				vp_fake = self.P(v_fake) + v_fake
-				vl_fake = self.L(v_fake) + v_fake
-				j_fake = self.J(torch.cat([vp_fake, vl_fake], dim=1))
+				if perturbation:
+					p_fake = self.P(v_fake)
+					l_fake = self.L(v_fake)
+				else:
+					p_fake = torch.zeros_like(v_fake)
+					l_fake = torch.zeros_like(v_fake)
+				j_fake = self.J(torch.cat([v_fake + p_fake, v_fake + l_fake], dim=1))
 
 				C_loss = self.criterion(j_fake, real_label)
 				C_loss.backward()
 				self.C_optimizer.step()
 
 				C_running_loss += C_loss.item()
-			O_running_loss += O_loss.item()
-			L_running_loss += L_loss.item()
-			P_running_loss += P_loss.item()
-			J_running_loss += J_loss.item()
 
 		return C_running_loss / nitrs, O_running_loss / nitrs, L_running_loss / nitrs, P_running_loss / nitrs, J_running_loss / nitrs
 
@@ -202,16 +221,24 @@ class JusticeGAN():
 			generated_samples.append(self.generate())
 		return torch.cat(generated_samples).cpu().detach().numpy()
 
+	def init_optimizers(self):
+		# === optimizers === #
+		self.C_optimizer = optim.Adam(self.C.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+		self.O_optimizer = optim.Adam(self.O.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+		self.L_optimizer = optim.Adam(self.L.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+		self.P_optimizer = optim.Adam(self.P.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+		self.J_optimizer = optim.Adam(self.J.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
+
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--nz', type=int, default=256, help='latent variable size')
-	parser.add_argument('--ncf', type=int, default=128, help='feature size of criminal')
-	parser.add_argument('--njf', type=int, default=128, help='feature size of judge')
+	parser.add_argument('--nz', type=int, default=128, help='latent variable size')
+	parser.add_argument('--ncf', type=int, default=64, help='feature size of criminal')
+	parser.add_argument('--njf', type=int, default=64, help='feature size of judge')
 	parser.add_argument('--njitrs', type=int, default=5, help='number of iterations for updating juddge')
-	parser.add_argument('--gamma', type=float, default=10.0, help='coefficient of perturbation loss')
+	parser.add_argument('--gamma', type=float, default=1.0, help='coefficient of perturbation loss')
 
-	parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
+	parser.add_argument('--lr', type=float, default=2e-4, help='learning rate')
 	parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for Adam')
 	parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for Adam')
 	parser.add_argument('--batch_size', type=int, default=8000, help='batch size')
@@ -219,7 +246,7 @@ def main():
 	parser.add_argument('--use_gpu', action='store_true', default=False, help='GPU mode')
 
 	parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
-	parser.add_argument('--num_test_samples', type=int, default=8000, help='number of samples in test')
+	parser.add_argument('--num_test_samples', type=int, default=80000, help='number of samples in test')
 	parser.add_argument('--checkpoint', type=int, default=10, help='checkpoint epoch')
 	opt = parser.parse_args()
 
@@ -234,7 +261,7 @@ def main():
 	model = JusticeGAN(opt)
 
 	for epoch in range(1, opt.num_epochs+1):
-		C_loss, O_loss, L_loss, P_loss, J_loss = model.train()
+		C_loss, O_loss, L_loss, P_loss, J_loss = model.train(perturbation=True)
 
 		if epoch % opt.checkpoint == 0:
 			generated_samples = model.test()
